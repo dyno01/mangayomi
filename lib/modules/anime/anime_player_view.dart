@@ -260,6 +260,7 @@ class _AnimeStreamPageState extends riv.ConsumerState<AnimeStreamPage>
     _currentPosition.value = position;
     if (_initSubtitleAndAudio) {
       _initSubtitleAndAudio = false;
+      // Set subtitle if available
       if (_firstVid.subtitles?.isNotEmpty ?? false) {
         try {
           final defaultTrack = _firstVid.subtitles!.firstWhere(
@@ -273,20 +274,38 @@ class _AnimeStreamPageState extends riv.ConsumerState<AnimeStreamPage>
               : SubtitleTrack.data(file, title: label, language: label);
           _player.setSubtitleTrack(track);
         } catch (_) {}
-        if (_firstVid.audios?.isNotEmpty ?? false) {
-          try {
-            final at = _firstVid.audios!.first;
-            _player.setAudioTrack(
-              AudioTrack.uri(
-                at.file ?? "",
-                title: at.label,
-                language: at.label,
-              ),
-            );
-          } catch (_) {}
-        }
+      }
+      // Set audio if available (always, not just if subtitles exist)
+      if (_firstVid.audios?.isNotEmpty ?? false) {
+        try {
+          final at = _firstVid.audios!.first;
+          _player.setAudioTrack(
+            AudioTrack.uri(
+              at.file ?? "",
+              title: at.label,
+              language: at.label,
+            ),
+          );
+          
+          // Show notification if multiple audio tracks are available
+          if (_firstVid.audios!.length > 1) {
+            _showAudioTracksAvailableNotification();
+          }
+        } catch (_) {}
       }
     }
+  }
+
+  void _showAudioTracksAvailableNotification() {
+    final audioTrackNames = _firstVid.audios!.map((a) => a.label ?? "Unknown").join(", ");
+    BotToast.showText(
+      contentColor: Colors.white,
+      textStyle: const TextStyle(color: Colors.black, fontSize: 16),
+      onlyOne: true,
+      align: const Alignment(0, 0.85),
+      duration: const Duration(seconds: 3),
+      text: "Multiple audio tracks available: $audioTrackNames\nTap settings to switch audio",
+    );
   }
 
   void _setSkipPhase(int secs) {
@@ -704,6 +723,14 @@ class _AnimeStreamPageState extends riv.ConsumerState<AnimeStreamPage>
     List<String> audios = [];
     if (widget.videos.isNotEmpty && !widget.isLocal) {
       for (var video in widget.videos) {
+        // Debug: Print available audio tracks from video source
+        if (video.audios?.isNotEmpty ?? false) {
+          print("Found ${video.audios!.length} audio tracks in video source:");
+          for (var audio in video.audios!) {
+            print("  - ${audio.label} (${audio.file})");
+          }
+        }
+        
         for (var audio in video.audios ?? []) {
           if (!audios.contains(audio.file)) {
             videoAudio.add(
@@ -721,6 +748,7 @@ class _AnimeStreamPageState extends riv.ConsumerState<AnimeStreamPage>
         }
       }
     }
+    
     final audio = _player.state.track.audio;
     videoAudio = videoAudio
         .map((e) {
@@ -736,6 +764,13 @@ class _AnimeStreamPageState extends riv.ConsumerState<AnimeStreamPage>
         .where((element) => element.title!.isNotEmpty)
         .toList();
     videoAudio.sort((a, b) => a.title!.compareTo(b.title!));
+    
+    // Debug: Print final audio track list
+    print("Final audio track list (${videoAudio.length} tracks):");
+    for (var audio in videoAudio) {
+      print("  - ${audio.title} (${audio.audio?.id ?? 'no id'})");
+    }
+    
     videoAudio.insert(0, VideoPrefs(isLocal: false, audio: AudioTrack.no()));
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 12),
@@ -753,8 +788,11 @@ class _AnimeStreamPageState extends riv.ConsumerState<AnimeStreamPage>
             onTap: () {
               Navigator.pop(context);
               try {
+                print("Setting audio track: $title");
                 _player.setAudioTrack(aud.audio!);
-              } catch (_) {}
+              } catch (e) {
+                print("Error setting audio track: $e");
+              }
             },
             child: textWidget(title, selected),
           );
@@ -995,12 +1033,42 @@ class _AnimeStreamPageState extends riv.ConsumerState<AnimeStreamPage>
   /// helper method for _mobileBottomButtonBar() and _desktopBottomButtonBar()
   Widget _buildSettingsButtons(BuildContext context) {
     final isFullscreen = ref.watch(fullscreenProvider);
+    
+    // Check if multiple audio tracks are available
+    bool hasMultipleAudioTracks = false;
+    if (widget.videos.isNotEmpty && !widget.isLocal) {
+      for (var video in widget.videos) {
+        if ((video.audios?.length ?? 0) > 1) {
+          hasMultipleAudioTracks = true;
+          break;
+        }
+      }
+    }
+    
     return Row(
       children: [
-        IconButton(
-          padding: _isDesktop ? EdgeInsets.zero : const EdgeInsets.all(5),
-          onPressed: () => _videoSettingDraggableMenu(context),
-          icon: const Icon(Icons.video_settings, color: Colors.white),
+        Stack(
+          children: [
+            IconButton(
+              padding: _isDesktop ? EdgeInsets.zero : const EdgeInsets.all(5),
+              onPressed: () => _videoSettingDraggableMenu(context),
+              icon: const Icon(Icons.video_settings, color: Colors.white),
+              tooltip: hasMultipleAudioTracks ? "Multiple audio tracks available" : "Video settings",
+            ),
+            if (hasMultipleAudioTracks)
+              Positioned(
+                right: 8,
+                top: 8,
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    color: Colors.orange,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+          ],
         ),
         PopupMenuButton<double>(
           tooltip: '', // Remove default tooltip "Show menu" for consistency
